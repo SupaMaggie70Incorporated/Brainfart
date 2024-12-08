@@ -1,0 +1,19 @@
+[package]
+name = "brainfart"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "libbrainfart"
+path = "src/lib.rs"
+
+[[bin]]
+name = "brainfart"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+logos = { workspace = true }
+headache = { path = "../headache" }
+ariadne = { workspace = true }
+num-integer = { version = "0.1.46", default-features = false }

@@ -1,0 +1,16 @@
+[package]
+name = "headache"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "headache"
+path = "src/main.rs"
+
+[lib]
+name = "libheadache"
+path = "src/lib.rs"
+
+[dependencies]
+clap = { workspace = true }
+ariadne = { workspace = true }

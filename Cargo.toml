@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = ["brainfart", "headache"]
+
+[workspace.dependencies]
+clap = { version = "4.5", features = ["derive"] }
+logos = { version = "0.14", features = [] }
+ariadne = { version = "0.5" }
