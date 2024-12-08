@@ -141,6 +141,8 @@ enum Token {
     LineComment,
     #[regex("/*", parse_block_comment)]
     BlockComment,
+    #[token("current")]
+    Current,
 }
 impl Error {
     pub fn ariadne_properties(&self) -> (String, Vec<(String, Span)>, Vec<String>) {
@@ -560,6 +562,10 @@ pub(crate) mod ast {
                     ValueAccessExpression::Raw(ValueAccess::Register(Register(0)), None),
                     initial_token.1,
                 )),
+                Token::Current => Ok(Spanned(
+                    ValueAccessExpression::Raw(ValueAccess::Current, None),
+                    initial_token.1,
+                )),
                 Token::Stack | Token::StaticStack | Token::Ident(_) => {
                     self.expect_token(Token::BracketOpen)?;
                     let offset = self.parse_integer()?;
@@ -855,6 +861,7 @@ pub(crate) mod ast {
                             ValueAccess::Heap(i) => *i = value,
                             ValueAccess::Virtual(_) => unreachable!(),
                             ValueAccess::StaticVariable(_, _) => unreachable!(),
+                            ValueAccess::Current => unreachable!(),
                         }
                     }
                     if let ValueAccess::Register(k) = &access {

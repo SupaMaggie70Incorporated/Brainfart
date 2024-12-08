@@ -10,16 +10,18 @@ meta entry start;
   , - 44
   - - 45
   . - 46
+  ; - 59
   < - 60
   > - 62
   [ - 91
   ] - 93
+
+Note that the semicolon signals the end of the program and the start of input
 */
 
 
 block parse_bf_input() {
     bfraw ".";
-    // 
 }
 global block start() {
     goto stack[0];

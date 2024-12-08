@@ -22,6 +22,7 @@ pub enum ValueAccess {
     /// A value access based on a parameter provided to a code block
     Virtual(u32),
     Heap(u32),
+    Current,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InlineCall {
@@ -195,6 +196,7 @@ impl AsmModuleWriter {
                 result
             }
             ValueAccess::Heap(a) => Some(self.heap_start + a),
+            ValueAccess::Current => Some(ctx.ptr_position),
         }
     }
     pub fn offset_from(
@@ -210,7 +212,7 @@ impl AsmModuleWriter {
             (Some(a), Some(b)) => Some((b as i32) - (a as i32)),
             (None, None) => match (base, access) {
                 (ValueAccess::Heap(a), ValueAccess::Heap(b)) => Some((b as i32) - (a as i32)),
-                _ => unreachable!(),
+                _ => panic!(),
             },
             _ => None,
         }
