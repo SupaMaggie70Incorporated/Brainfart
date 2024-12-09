@@ -123,9 +123,9 @@ enum Token {
     If,
     #[token("else")]
     Else,
-    #[token("+")]
+    #[token("++")]
     Add,
-    #[token("-")]
+    #[token("--")]
     Subtract,
     #[token("inline")]
     Inline,
@@ -143,6 +143,12 @@ enum Token {
     BlockComment,
     #[token("current")]
     Current,
+    #[token("while")]
+    While,
+    #[token("zero")]
+    Zero,
+    #[token("notzero")]
+    NotZero,
 }
 impl Error {
     pub fn ariadne_properties(&self) -> (String, Vec<(String, Span)>, Vec<String>) {
