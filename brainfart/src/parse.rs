@@ -303,9 +303,9 @@ pub(crate) mod ast {
     #[derive(Debug, Clone, PartialEq, Eq, Default)]
     pub struct InstructionStatement {
         instruction: Instruction,
-        value_overrides: [Option<Spanned<(Integer, bool)>>; 4],
-        value_access_overrides: [Option<SpannedValueAccess>; 4],
-        block_overrides: [Option<(SpannedString, Vec<SpannedValueAccess>)>; 4],
+        value_overrides: Vec<Spanned<(Integer, bool)>>,
+        value_access_overrides: Vec<SpannedValueAccess>,
+        block_overrides: Vec<(SpannedString, Vec<SpannedValueAccess>)>,
     }
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum Integer {
@@ -633,6 +633,15 @@ pub(crate) mod ast {
             }
             Ok(Spanned(res, span_start..span_end))
         }
+        fn parse_inline_call(
+            &mut self,
+            params: &HashMap<String, u32>,
+        ) -> Result<(
+            Spanned<InlineCall>,
+            Option<(SpannedString, Vec<SpannedValueAccess>)>,
+        )> {
+            todo!()
+        }
         fn parse_instruction(
             &mut self,
             params: &HashMap<String, u32>,
@@ -650,43 +659,37 @@ pub(crate) mod ast {
                 }
                 Token::GoTo => {
                     let dest = self.parse_value_access(params)?;
+                    span.end = dest.1.end;
                     InstructionStatement {
                         instruction: Instruction::GoTo(ValueAccess::Raw(0)),
-                        value_access_overrides: [Some(dest), None, None, None],
+                        value_access_overrides: vec![dest],
                         ..Default::default()
                     }
                 }
                 Token::MoveLeft => {
                     let amount = self.parse_integer()?;
+                    span.end = amount.1.end;
                     InstructionStatement {
                         instruction: Instruction::IntrinsicMove(0),
-                        value_overrides: [
-                            Some(Spanned((amount.0, true), amount.1)),
-                            None,
-                            None,
-                            None,
-                        ],
+                        value_overrides: vec![Spanned((amount.0, true), amount.1)],
                         ..Default::default()
                     }
                 }
                 Token::MoveRight => {
                     let amount = self.parse_integer()?;
+                    span.end = amount.1.end;
                     InstructionStatement {
                         instruction: Instruction::IntrinsicMove(0),
-                        value_overrides: [
-                            Some(Spanned((amount.0, false), amount.1)),
-                            None,
-                            None,
-                            None,
-                        ],
+                        value_overrides: vec![Spanned((amount.0, false), amount.1)],
                         ..Default::default()
                     }
                 }
                 Token::UpdatePtr => {
                     let target = self.parse_value_access(params)?;
+                    span.end = target.1.end;
                     InstructionStatement {
                         instruction: Instruction::IntrinsicUpdatePtrIndex(ValueAccess::Raw(0)),
-                        value_access_overrides: [Some(target), None, None, None],
+                        value_access_overrides: vec![target],
                         ..Default::default()
                     }
                 }
@@ -694,6 +697,79 @@ pub(crate) mod ast {
                     instruction: Instruction::SetExit,
                     ..Default::default()
                 },
+                Token::Add => {
+                    let value = self.parse_integer()?;
+                    span.end = value.1.end;
+                    InstructionStatement {
+                        instruction: Instruction::Increment {
+                            position: ValueAccess::Current,
+                            value: 0,
+                            tmp: None,
+                        },
+                        value_overrides: vec![Spanned((value.0, false), value.1)],
+                        ..Default::default()
+                    }
+                }
+                Token::Subtract => {
+                    let value = self.parse_integer()?;
+                    span.end = value.1.end;
+                    InstructionStatement {
+                        instruction: Instruction::Increment {
+                            position: ValueAccess::Current,
+                            value: 0,
+                            tmp: None,
+                        },
+                        value_overrides: vec![Spanned((value.0, true), value.1)],
+                        ..Default::default()
+                    }
+                }
+                Token::Push => {
+                    let typ = self.next_token()?;
+                    let value = self.parse_integer()?;
+                    span.end = value.1.end;
+                    InstructionStatement {
+                        instruction: match typ.0 {
+                            Token::Stack => Instruction::PushStack(0),
+                            Token::StaticStack => Instruction::PushStaticStack(0),
+                            _ => {
+                                return Err(Error::Unexpected(
+                                    typ.1,
+                                    Some("'stack' or 'staticstack'".to_string()),
+                                ))
+                            }
+                        },
+                        value_overrides: vec![Spanned((value.0, false), value.1)],
+                        ..Default::default()
+                    }
+                }
+                Token::Pop => {
+                    let typ = self.next_token()?;
+                    let value = self.parse_integer()?;
+                    span.end = value.1.end;
+                    InstructionStatement {
+                        instruction: match typ.0 {
+                            Token::Stack => Instruction::PopStack(0),
+                            Token::StaticStack => Instruction::PopStaticStack(0),
+                            _ => {
+                                return Err(Error::Unexpected(
+                                    typ.1,
+                                    Some("'stack' or 'staticstack'".to_string()),
+                                ))
+                            }
+                        },
+                        value_overrides: vec![Spanned((value.0, false), value.1)],
+                        ..Default::default()
+                    }
+                }
+                Token::Inline => {
+                    let (call, other) = self.parse_inline_call(params)?;
+                    span.end = call.1.end;
+                    InstructionStatement {
+                        instruction: Instruction::InlineBlock(call.0),
+                        block_overrides: other.into_iter().collect(),
+                        ..Default::default()
+                    }
+                }
                 a => todo!("Token parsing not yet implemented: {a:?}"),
             };
             self.expect_token(Token::Semicolon)?;
@@ -905,31 +981,25 @@ pub(crate) mod ast {
         fn lower_instruction(&self, instruction: &SpannedInstruction) -> Result<Instruction> {
             let mut i = instruction.instruction.clone();
             let value_access = |index: usize| {
-                self.lower_value_access(
-                    instruction.value_access_overrides[index]
-                        .as_ref()
-                        .unwrap()
-                        .clone(),
-                )
+                self.lower_value_access(instruction.value_access_overrides[index].clone())
             };
-            let value_override = |index: usize| {
-                self.lower_value_override(instruction.value_overrides[index].as_ref().unwrap())
-            };
-            let global = |index: usize| {
-                self.lower_global_call_id(&instruction.block_overrides[index].as_ref().unwrap().0)
-            };
+            let value_override =
+                |index: usize| self.lower_value_override(&instruction.value_overrides[index]);
+            let global =
+                |index: usize| self.lower_global_call_id(&instruction.block_overrides[index].0);
             let inline = |index: usize| -> Result<InlineCall> {
-                let a = instruction.block_overrides[index].as_ref().unwrap();
+                let a = &instruction.block_overrides[index];
                 let block = self.lower_block_id(&a.0)?;
                 let mut parameters = Vec::with_capacity(a.1.len());
                 for p in &a.1 {
                     parameters.push(self.lower_value_access(p.clone())?);
                 }
-                Ok(InlineCall { block, parameters })
+                todo!(); // Incomplete: handle inline calls(where the block isn't declared elsewhere)
+                Ok(InlineCall::Block { block, parameters })
             };
             let temp = |index: usize| {
-                if let Some(a) = instruction.value_access_overrides[index].as_ref() {
-                    Some(self.lower_value_access(a.clone()))
+                if instruction.value_access_overrides.len() > index {
+                    Some(self.lower_value_access(instruction.value_access_overrides[index].clone()))
                 } else {
                     None
                 }

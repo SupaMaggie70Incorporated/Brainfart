@@ -5,6 +5,20 @@ meta stackalign 3;
 meta stacksize 256;
 meta staticstacksize 0;
 meta entry start;
+/*Used instructions/features
+  ++/-- number
+  a ++/-- number
+  push/pop stack number
+  if zero[] block/inline else block/inline
+  a = number
+  goto
+  bfraw
+  updateptr
+  inline
+  while place block {}
+  exit
+  Stack and heap
+*/
 
 /* Valid characters:
   + - 43
@@ -33,19 +47,19 @@ block parse_bf_input_2() {
   -- 1;
   if zero[current] block { // <
     ++ 5;
-  } else {
+  } else block {
     -- 2;
     if zero[current] block { // >
       ++ 6;
-    } else {
+    } else block {
       -- 29;
       if zero[current] block { // [
         ++ 7;
-      } else {
+      } else block {
         -- 2;
         if zero[current] block { // ]
           ++ 8;
-        } else {
+        } else block {
           current = 0;
         }
       }
@@ -56,29 +70,27 @@ block parse_bf_input() {
   bfraw ".";
   if zero[current] block {
     r1 = 0;
-  } else {
+  } else block {
   -- 43;
     if zero[current] block { // +
       ++ 1;
-    } else {
+    } else block {
       -- 1;
       if zero[current] block { // ,
         ++ 4;
-      } else {
+      } else block {
         -- 1;
         if zero[current] block { // -
           ++ 2;
-        } else {
+        } else block {
           --1;
           if zero[current] block { // .
             ++ 3;
-          } else {
+          } else block {
             --13;
             if zero[current] block { // ;
               r1 = 0;
-            } else {
-              inline parse_bf_input_2();
-            }
+            } else inline parse_bf_input_2();
           }
         }
       }
@@ -96,7 +108,7 @@ global block start() {
   }
   // Put at the first instruction
   r2 -- 1;
-  while r2 {
+  while r2 block {
     r2 -- 1;
     pop stack 1;
   }
@@ -115,25 +127,25 @@ block exit_memory() {
 }
 block iterate_2() {
   -- 1;
-  if zero[current] { // <
+  if zero[current] block { // <
     ++ 5;
     push stack 1;
     inline goto_memory_location();
     bfraw ">+<";
     inline exit_memory();
-  } else {
+  } else block {
     -- 1;
-    if zero[current] { // >
+    if zero[current] block { // >
       ++ 6;
       push stack 1;
       inline goto_memory_location();
       bfraw "<-<";
       inline exit_memory();
-    } else {
+    } else block {
       -- 1;
-      if zero[current] { // [
+      if zero[current] block { // [
         ++ 7;
-      } else { // ]
+      } else block { // ]
         ++ 7;
       }
     }
@@ -141,43 +153,41 @@ block iterate_2() {
 }
 global block iterate() {
   goto stack[0];
-  if zero[current] { // End or \0
+  if zero[current] block { // End or \0
     exit;
-  } else {
+  } else block {
     -- 1;
-    if zero[current] { // +
+    if zero[current] block { // +
       ++ 1;
       push stack 1;
       inline goto_memory_location();
       ++ 1;
       inline exit_memory();
-    } else {
+    } else block {
       -- 1;
-      if zero[current] { // -
+      if zero[current] block { // -
         ++ 2;
         push stack 1;
         inline goto_memory_location();
         -- 1;
         inline exit_memory();
-      } else {
+      } else block {
         -- 1;
-        if zero[current] { // .
+        if zero[current] block { // .
           ++ 3;
           push stack 1;
           inline goto_memory_location();
           bfraw ".";
           inline exit_memory();
-        } else {
+        } else block {
           -- 1;
-          if zero[current] { // ,
+          if zero[current] block { // ,
             ++ 4;
             push stack 1;
             inline goto_memory_location();
             bfraw ",";
             inline exit_memory();
-          } else {
-            inline iterate_2();
-          }
+          } else inline iterate_2();
         }
       }
     }

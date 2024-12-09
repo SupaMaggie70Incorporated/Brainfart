@@ -25,9 +25,14 @@ pub enum ValueAccess {
     Current,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InlineCall {
-    pub block: BlockHandle,
-    pub parameters: Vec<ValueAccess>,
+pub enum InlineCall {
+    Block {
+        block: BlockHandle,
+        parameters: Vec<ValueAccess>,
+    },
+    Inline {
+        instructions: Vec<Instruction>,
+    },
 }
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Instruction {
@@ -443,11 +448,18 @@ impl AsmModuleWriter {
                 self.write_instruction(writer, Instruction::GoTo(position), ctx)?;
                 self.write_instruction(writer, Instruction::IntrinsicAdd(c as i32), ctx)?;
             }
-            Instruction::InlineBlock(b) => {
-                ctx.parameter_stack.push(b.parameters);
-                self.write_block(writer, &self.module.code_blocks[b.block as usize], ctx)?;
-                ctx.parameter_stack.pop().unwrap();
-            }
+            Instruction::InlineBlock(b) => match b {
+                InlineCall::Block { block, parameters } => {
+                    ctx.parameter_stack.push(parameters);
+                    self.write_block(writer, &self.module.code_blocks[block as usize], ctx)?;
+                    ctx.parameter_stack.pop().unwrap();
+                }
+                InlineCall::Inline { instructions } => {
+                    for ins in instructions {
+                        self.write_instruction(writer, ins, ctx)?;
+                    }
+                }
+            },
             Instruction::Move { src, dst, tmp } => {
                 self.write_instruction(writer, Instruction::GoTo(dst), ctx)?;
                 write!(writer, "[-]")?;
