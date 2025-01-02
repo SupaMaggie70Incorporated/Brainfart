@@ -1,1 +1,2 @@
-cargo run --bin brainfart -- test.bfck.asm -o test.bfck --run
+cargo run --bin brainfart -- test.bfck.asm -o test.bfck --optimize-adds --pretty --run
+cargo run --bin headache -- test.bfck --debug

@@ -55,7 +55,8 @@ fn main() {
             let mut accept = false;
             for arg in std::env::args_os() {
                 if accept {
-                    run_args.push(arg);
+                    run_args.push(arg.clone());
+                    println!("{}", arg.into_string().unwrap());
                 } else if arg == "--" {
                     accept = true
                 }

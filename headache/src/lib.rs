@@ -20,6 +20,8 @@ pub struct Args {
     pub advanced_comments: bool,
     #[arg(short, long, default_value = "false")]
     pub no_wrap: bool,
+    #[arg(short, long, default_value = "false")]
+    pub debug: bool,
 }
 impl Into<RunOptions> for Args {
     fn into(self) -> RunOptions {
@@ -46,6 +48,7 @@ impl Into<RunOptions> for Args {
             byte: !self.large_int,
             advanced_comments: self.advanced_comments,
             wrap: !self.no_wrap,
+            debug: self.debug,
         }
     }
 }
@@ -58,6 +61,7 @@ pub struct RunOptions {
     pub input: String,
     pub advanced_comments: bool,
     pub wrap: bool,
+    pub debug: bool,
 }
 impl Default for RunOptions {
     fn default() -> Self {
@@ -70,6 +74,7 @@ impl Default for RunOptions {
             input: String::new(),
             advanced_comments: false,
             wrap: true,
+            debug: false,
         }
     }
 }
@@ -87,6 +92,7 @@ pub enum Operation {
     StartLoop(u32),
     /// ]
     EndLoop(u32),
+    Debug,
 }
 fn append_operation(
     program: &mut Vec<(Operation, Range<usize>)>,
@@ -223,6 +229,9 @@ pub fn run(args: RunOptions) {
                     );
                 }
             }
+            '#' if args.debug => {
+                append_operation(&mut program, Operation::Debug, i..i + 1);
+            }
             _ => (),
         }
         i += 1;
@@ -339,6 +348,13 @@ fn execute(args: RunOptions, program: &mut Vec<(Operation, Range<usize>)>) {
                     continue;
                 }
                 unfiltered_ops += 1;
+            }
+            Operation::Debug => {
+                print!("\n[HEADACHE DEBUG: {{ {}", memory[0]);
+                for value in &memory[1..] {
+                    print!(", {value}");
+                }
+                print!(" }}]\n");
             }
         }
         pc += 1;

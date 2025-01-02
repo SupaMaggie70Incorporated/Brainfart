@@ -1,5 +1,5 @@
-static counter = [4];
-static abc = "Hello, world!\n";
+static counter = [2];
+static abc = "Cd\n";
 meta registers 0;
 meta stackalign 1;
 meta stacksize 4;
@@ -20,5 +20,6 @@ global block main() {
   ++ 'B';
   bfraw ".[-]";
   pop stack 3;
+  bfraw "#";
   exit;
 }
