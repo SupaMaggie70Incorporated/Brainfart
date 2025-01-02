@@ -6,18 +6,18 @@ meta stacksize 256;
 meta staticstacksize 0;
 meta entry start;
 /*Used instructions/features
-  ++/-- number
-  a ++/-- number
-  push/pop stack number
-  if zero[] block/inline else block/inline
-  a = number
-  goto
-  bfraw
-  updateptr
-  inline
-  while place block {}
-  exit
-  Stack and heap
+  ~++/-- number~
+  ~a ++/-- number~
+  ~push/pop stack number~
+  ~if zero[] block/inline else block/inline~
+  ~a = number~
+  ~goto~
+  ~bfraw~
+  ~updateptr~
+  ~inline~
+  ~while place block {}~
+  ~exit~
+  ~Stack and heap~
 */
 
 /* Valid characters:
@@ -90,7 +90,7 @@ block parse_bf_input() {
             --13;
             if zero[current] block { // ;
               r1 = 0;
-            } else inline parse_bf_input_2();
+            } else parse_bf_input_2();
           }
         }
       }
@@ -100,7 +100,7 @@ block parse_bf_input() {
 global block start() {
   r1 = 1;
   r2 = 0;
-  while r1 {
+  while r1 block {
     r2 ++ 1;
     push stack 1;
     goto stack[0];
@@ -187,7 +187,7 @@ global block iterate() {
             inline goto_memory_location();
             bfraw ",";
             inline exit_memory();
-          } else inline iterate_2();
+          } else iterate_2();
         }
       }
     }

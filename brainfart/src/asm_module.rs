@@ -26,13 +26,20 @@ pub enum ValueAccess {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InlineCall {
-    Block {
+    Inline {
         block: BlockHandle,
         parameters: Vec<ValueAccess>,
     },
-    Inline {
+    Block {
         instructions: Vec<Instruction>,
     },
+}
+impl Default for InlineCall {
+    fn default() -> Self {
+        Self::Block {
+            instructions: Vec::new(),
+        }
+    }
 }
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Instruction {
@@ -96,6 +103,10 @@ pub enum Instruction {
         block: InlineCall,
         tmp: [Option<ValueAccess>; 2],
     },
+    InlineWhileLoop {
+        position: ValueAccess,
+        block: InlineCall,
+    },
     PushStack(u32),
     PopStack(u32),
     PushStaticStack(u32),
@@ -154,10 +165,15 @@ pub struct AsmModuleWriter {
     heap_start: u32,
 }
 impl AsmModuleWriter {
-    fn calculate_best_sum_product(num: u32, distance: u32) -> (u32, u32, i32) {
+    fn calculate_best_sum_product(num: i32, distance: u32) -> (i32, u32, i32) {
         if num == 0 {
             return (0, 0, 0);
+        } else if num < 0 {
+            let (a, b, c) = Self::calculate_best_sum_product(-num, distance);
+            return (-a, b, -c);
         }
+        let num = num.unsigned_abs();
+        // This should return (a,b,c) such that a*b+c=num and
         const fn cost(a: u32, b: u32, c: u32, distance: u32) -> u32 {
             // One + for each
             // If b > 0 then you need brackets and moves both ways for the distance
@@ -181,7 +197,7 @@ impl AsmModuleWriter {
             }
         }
         assert!((best.1 .0 * best.1 .1) as i32 + best.1 .2 == num as i32);
-        best.1
+        (best.1 .0 as i32, best.1 .1, best.1 .2)
     }
     pub fn resolve_position(&self, access: ValueAccess, ctx: &mut BlockContext) -> Option<u32> {
         match access {
@@ -347,6 +363,9 @@ impl AsmModuleWriter {
                 )?;
             }
             Instruction::GoTo(pos) => {
+                if pos == ValueAccess::Current {
+                    return Ok(()); // Noop
+                }
                 if let Some(pos) = self.resolve_position(pos, ctx) {
                     if let Some(offset) = ctx.stack_position_to_end {
                         if offset < 0 {
@@ -422,39 +441,25 @@ impl AsmModuleWriter {
                 value,
                 tmp,
             } => {
-                let (a, b, c, offset) = if let Some(va) = tmp {
-                    if self.write_options.optimize_constant_set {
-                        let offset = self.offset_from(position, va, ctx).unwrap();
-                        let (a, b, c) =
-                            Self::calculate_best_sum_product(value, offset.unsigned_abs());
-                        (a, b, c, offset)
-                    } else {
-                        (0, 0, value as i32, 0)
-                    }
-                } else {
-                    (0, 0, value as i32, 0)
-                };
                 self.write_instruction(writer, Instruction::GoTo(position), ctx)?;
                 write!(writer, "[-]")?;
-                if a > 0 && b > 0 {
-                    self.write_instruction(writer, Instruction::GoTo(tmp.unwrap()), ctx)?;
-                    self.write_instruction(writer, Instruction::IntrinsicAdd(a as i32), ctx)?;
-                    write!(writer, "[-")?;
-                    self.write_instruction(writer, Instruction::IntrinsicMove(-offset), ctx)?;
-                    self.write_instruction(writer, Instruction::IntrinsicAdd(b as i32), ctx)?;
-                    self.write_instruction(writer, Instruction::IntrinsicMove(offset), ctx)?;
-                    write!(writer, "]")?;
-                }
-                self.write_instruction(writer, Instruction::GoTo(position), ctx)?;
-                self.write_instruction(writer, Instruction::IntrinsicAdd(c as i32), ctx)?;
+                self.write_instruction(
+                    writer,
+                    Instruction::Increment {
+                        position,
+                        value: value as i32,
+                        tmp,
+                    },
+                    ctx,
+                )?;
             }
             Instruction::InlineBlock(b) => match b {
-                InlineCall::Block { block, parameters } => {
+                InlineCall::Inline { block, parameters } => {
                     ctx.parameter_stack.push(parameters);
                     self.write_block(writer, &self.module.code_blocks[block as usize], ctx)?;
                     ctx.parameter_stack.pop().unwrap();
                 }
-                InlineCall::Inline { instructions } => {
+                InlineCall::Block { instructions } => {
                     for ins in instructions {
                         self.write_instruction(writer, ins, ctx)?;
                     }
@@ -495,9 +500,29 @@ impl AsmModuleWriter {
                 value,
                 tmp,
             } => {
+                let (a, b, c, offset) = if let Some(va) = tmp {
+                    if self.write_options.optimize_constant_set {
+                        let offset = self.offset_from(position, va, ctx).unwrap();
+                        let (a, b, c) =
+                            Self::calculate_best_sum_product(value, offset.unsigned_abs());
+                        (a, b, c, offset)
+                    } else {
+                        (0, 0, value as i32, 0)
+                    }
+                } else {
+                    (0, 0, value as i32, 0)
+                };
+                if a > 0 && b > 0 {
+                    self.write_instruction(writer, Instruction::GoTo(tmp.unwrap()), ctx)?;
+                    self.write_instruction(writer, Instruction::IntrinsicAdd(a as i32), ctx)?;
+                    write!(writer, "[-")?;
+                    self.write_instruction(writer, Instruction::IntrinsicMove(-offset), ctx)?;
+                    self.write_instruction(writer, Instruction::IntrinsicAdd(b as i32), ctx)?;
+                    self.write_instruction(writer, Instruction::IntrinsicMove(offset), ctx)?;
+                    write!(writer, "]")?;
+                }
                 self.write_instruction(writer, Instruction::GoTo(position), ctx)?;
-                self.write_instruction(writer, Instruction::IntrinsicAdd(value), ctx)?;
-                todo!()
+                self.write_instruction(writer, Instruction::IntrinsicAdd(c as i32), ctx)?;
             }
             Instruction::Add { src, dst, tmp } => {
                 if let Some(tmp) = tmp {
@@ -633,6 +658,13 @@ impl AsmModuleWriter {
                     write!(writer, "]")?;
                     self.write_instruction(writer, Instruction::PopStaticStack(1), ctx)?;
                 }
+            }
+            Instruction::InlineWhileLoop { position, block } => {
+                self.write_instruction(writer, Instruction::GoTo(position), ctx)?;
+                write!(writer, "[")?;
+                self.write_instruction(writer, Instruction::InlineBlock(block), ctx)?;
+                self.write_instruction(writer, Instruction::GoTo(position), ctx)?;
+                write!(writer, "]")?;
             }
             Instruction::CallIfZero {
                 mut position,

@@ -286,6 +286,8 @@ fn parse_block_comment<'a>(lex: &mut Lexer<'a, Token>) -> logos::Skip {
     logos::Skip
 }
 pub(crate) mod ast {
+    use std::iter::Peekable;
+
     use logos::SpannedIter;
 
     use super::*;
@@ -306,12 +308,24 @@ pub(crate) mod ast {
         value_overrides: Vec<Spanned<(Integer, bool)>>,
         value_access_overrides: Vec<SpannedValueAccess>,
         block_overrides: Vec<(SpannedString, Vec<SpannedValueAccess>)>,
+        inline_overrides: Vec<Spanned<RawInlineCall>>,
     }
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum Integer {
         Literal(u32),
         Length(String),
         Constant(String),
+    }
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum RawInlineCall {
+        Inline {
+            call: SpannedString,
+            params: Vec<SpannedValueAccess>,
+        },
+        Block {
+            instructions: Vec<SpannedInstruction>,
+        },
+        Empty,
     }
     impl Default for Integer {
         fn default() -> Self {
@@ -323,7 +337,8 @@ pub(crate) mod ast {
     type SpannedInstruction = Spanned<InstructionStatement>;
     type SpannedBlock = Spanned<BlockStatement>;
     pub struct Parser<'source> {
-        lexer: SpannedIter<'source, Token>,
+        lexer: Peekable<SpannedIter<'source, Token>>,
+        entire_code: String,
         pub statics: Vec<Spanned<(StaticVariable, Option<SpannedInteger>)>>,
         pub static_names: HashMap<String, u32>,
         pub blocks: Vec<SpannedBlock>,
@@ -340,8 +355,11 @@ pub(crate) mod ast {
     impl<'a> Parser<'a> {
         pub fn new(input: &'a str) -> Self {
             let lexer = Token::lexer(input).spanned();
+            let entire_code = lexer.slice().to_owned();
+            let lexer = lexer.peekable();
             Self {
                 lexer,
+                entire_code,
                 statics: Vec::new(),
                 static_names: HashMap::new(),
                 blocks: Vec::new(),
@@ -509,7 +527,7 @@ pub(crate) mod ast {
             Ok(module)
         }
         pub fn get_code(&mut self) -> String {
-            self.lexer.slice().to_owned()
+            self.entire_code.clone()
         }
         fn next_token(&mut self) -> Result<(Token, Span)> {
             match self.lexer.next() {
@@ -524,6 +542,17 @@ pub(crate) mod ast {
                 Ok(next.1)
             } else {
                 Err(Error::Unexpected(next.1, Some(format!("'{token:?}'"))))
+            }
+        }
+        fn peek(&mut self) -> Result<Spanned<Token>> {
+            if let Some(t) = self.lexer.peek() {
+                if let Ok(token) = &t.0 {
+                    Ok(Spanned(token.clone(), t.1.clone()))
+                } else {
+                    Err(t.0.clone().unwrap_err())
+                }
+            } else {
+                Err(Error::UnexpectedEOF)
             }
         }
         fn parse_ident(&mut self) -> Result<SpannedString> {
@@ -636,20 +665,73 @@ pub(crate) mod ast {
         fn parse_inline_call(
             &mut self,
             params: &HashMap<String, u32>,
-        ) -> Result<(
-            Spanned<InlineCall>,
-            Option<(SpannedString, Vec<SpannedValueAccess>)>,
-        )> {
-            todo!()
+        ) -> Result<Spanned<RawInlineCall>> {
+            match self.next_token()? {
+                (Token::Ident(call), ident_span) => {
+                    let mut inputs_span = self.expect_token(Token::ParenOpen)?;
+                    let mut inputs = Vec::new();
+                    let mut was_comma = true;
+                    loop {
+                        match self.peek()? {
+                            Spanned(Token::Comma, s) => {
+                                self.next_token()?;
+                                if was_comma {
+                                    return Err(Error::Unexpected(
+                                        s,
+                                        Some("')' or value access".to_string()),
+                                    ));
+                                } else {
+                                    was_comma = true;
+                                }
+                            }
+                            Spanned(Token::ParenClose, _) => {
+                                inputs_span.end = self.next_token()?.1.end;
+
+                                break;
+                            }
+                            _ => (),
+                        }
+                        if !was_comma {
+                            return Err(Error::Unexpected(
+                                self.next_token().unwrap().1,
+                                Some("',' or ')'".to_string()),
+                            ));
+                        }
+                        inputs.push(self.parse_value_access(params)?);
+                    }
+                    Ok(Spanned(
+                        RawInlineCall::Inline {
+                            call: Spanned(call, ident_span.clone()),
+                            params: inputs,
+                        },
+                        ident_span.start..inputs_span.end,
+                    ))
+                }
+                (Token::Block, start_span) => {
+                    let Spanned(BlockStatement { instructions, .. }, b_span) =
+                        self.parse_block(params, start_span.start)?;
+                    Ok(Spanned(RawInlineCall::Block { instructions }, b_span))
+                }
+                (_, token_span) => {
+                    return Err(Error::Unexpected(
+                        token_span,
+                        Some("'block' or identifier".to_string()),
+                    ))
+                }
+            }
         }
         fn parse_instruction(
             &mut self,
             params: &HashMap<String, u32>,
         ) -> Result<(Option<InstructionStatement>, Span)> {
-            let (t, mut span) = self.next_token()?;
+            let Spanned(t, mut span) = self.peek()?;
             let r = match t {
-                Token::BraceClose => return Ok((None, span)),
+                Token::BraceClose => {
+                    self.next_token()?;
+                    return Ok((None, span));
+                }
                 Token::BfRaw => {
+                    self.next_token()?;
                     let bfstr = self.parse_string()?;
                     span.end = bfstr.1.end;
                     InstructionStatement {
@@ -658,6 +740,7 @@ pub(crate) mod ast {
                     }
                 }
                 Token::GoTo => {
+                    self.next_token()?;
                     let dest = self.parse_value_access(params)?;
                     span.end = dest.1.end;
                     InstructionStatement {
@@ -667,6 +750,7 @@ pub(crate) mod ast {
                     }
                 }
                 Token::MoveLeft => {
+                    self.next_token()?;
                     let amount = self.parse_integer()?;
                     span.end = amount.1.end;
                     InstructionStatement {
@@ -676,6 +760,7 @@ pub(crate) mod ast {
                     }
                 }
                 Token::MoveRight => {
+                    self.next_token()?;
                     let amount = self.parse_integer()?;
                     span.end = amount.1.end;
                     InstructionStatement {
@@ -685,6 +770,7 @@ pub(crate) mod ast {
                     }
                 }
                 Token::UpdatePtr => {
+                    self.next_token()?;
                     let target = self.parse_value_access(params)?;
                     span.end = target.1.end;
                     InstructionStatement {
@@ -693,11 +779,15 @@ pub(crate) mod ast {
                         ..Default::default()
                     }
                 }
-                Token::SetExit => InstructionStatement {
-                    instruction: Instruction::SetExit,
-                    ..Default::default()
-                },
+                Token::SetExit => {
+                    self.next_token()?;
+                    InstructionStatement {
+                        instruction: Instruction::SetExit,
+                        ..Default::default()
+                    }
+                }
                 Token::Add => {
+                    self.next_token()?;
                     let value = self.parse_integer()?;
                     span.end = value.1.end;
                     InstructionStatement {
@@ -706,11 +796,16 @@ pub(crate) mod ast {
                             value: 0,
                             tmp: None,
                         },
+                        value_access_overrides: vec![Spanned(
+                            ValueAccessExpression::Raw(ValueAccess::Current, None),
+                            span.clone(),
+                        )],
                         value_overrides: vec![Spanned((value.0, false), value.1)],
                         ..Default::default()
                     }
                 }
                 Token::Subtract => {
+                    self.next_token()?;
                     let value = self.parse_integer()?;
                     span.end = value.1.end;
                     InstructionStatement {
@@ -724,6 +819,7 @@ pub(crate) mod ast {
                     }
                 }
                 Token::Push => {
+                    self.next_token()?;
                     let typ = self.next_token()?;
                     let value = self.parse_integer()?;
                     span.end = value.1.end;
@@ -743,6 +839,7 @@ pub(crate) mod ast {
                     }
                 }
                 Token::Pop => {
+                    self.next_token()?;
                     let typ = self.next_token()?;
                     let value = self.parse_integer()?;
                     span.end = value.1.end;
@@ -762,15 +859,126 @@ pub(crate) mod ast {
                     }
                 }
                 Token::Inline => {
-                    let (call, other) = self.parse_inline_call(params)?;
+                    self.next_token()?;
+                    let call = self.parse_inline_call(params)?;
                     span.end = call.1.end;
                     InstructionStatement {
-                        instruction: Instruction::InlineBlock(call.0),
-                        block_overrides: other.into_iter().collect(),
+                        instruction: Instruction::InlineBlock(InlineCall::Inline {
+                            block: 0,
+                            parameters: Vec::new(),
+                        }),
+                        inline_overrides: vec![call],
                         ..Default::default()
                     }
                 }
-                a => todo!("Token parsing not yet implemented: {a:?}"),
+                Token::While => {
+                    self.next_token()?;
+                    let position = self.parse_value_access(params)?;
+                    let call = self.parse_inline_call(params)?;
+                    span.end = call.1.end;
+                    InstructionStatement {
+                        instruction: Instruction::InlineWhileLoop {
+                            position: ValueAccess::Current,
+                            block: InlineCall::default(),
+                        },
+                        inline_overrides: vec![call],
+                        value_access_overrides: vec![position],
+                        ..Default::default()
+                    }
+                }
+                Token::If => {
+                    self.next_token()?;
+                    let n = self.next_token()?;
+                    let zero = match n.0 {
+                        Token::Zero => true,
+                        Token::NotZero => false,
+                        _ => {
+                            return Err(Error::Unexpected(
+                                n.1,
+                                Some("'zero' or 'notzero'".to_string()),
+                            ))
+                        }
+                    };
+                    self.expect_token(Token::BracketOpen)?;
+                    let position = self.parse_value_access(params)?;
+                    self.expect_token(Token::BracketClose)?;
+                    let first = self.parse_inline_call(params)?;
+                    let mut second = Spanned(RawInlineCall::Empty, 0..0);
+                    if self.peek()?.0 == Token::Else {
+                        self.next_token()?;
+                        second = self.parse_inline_call(params)?;
+                    }
+                    let (zero, nonzero) = if zero {
+                        (first, second)
+                    } else {
+                        (second, first)
+                    };
+                    InstructionStatement {
+                        instruction: Instruction::BlockIfZero {
+                            position: ValueAccess::Current,
+                            zero: InlineCall::default(),
+                            nonzero: InlineCall::default(),
+                            tmp: [None; 2],
+                        },
+                        value_access_overrides: vec![position],
+                        inline_overrides: vec![zero, nonzero],
+                        ..Default::default()
+                    }
+                }
+                _ => {
+                    let position = self.parse_value_access(params)?;
+                    let action = self.next_token()?;
+                    match action.0 {
+                        Token::Add => {
+                            let value = self.parse_integer()?;
+                            span.end = value.1.end;
+                            InstructionStatement {
+                                instruction: Instruction::Increment {
+                                    position: ValueAccess::Current,
+                                    value: 0,
+                                    tmp: None,
+                                },
+                                value_overrides: vec![Spanned((value.0, false), value.1)],
+                                value_access_overrides: vec![position],
+                                ..Default::default()
+                            }
+                        }
+                        Token::Subtract => {
+                            let value = self.parse_integer()?;
+                            span.end = value.1.end;
+                            InstructionStatement {
+                                instruction: Instruction::Increment {
+                                    position: ValueAccess::Current,
+                                    value: 0,
+                                    tmp: None,
+                                },
+                                value_overrides: vec![Spanned((value.0, true), value.1)],
+                                value_access_overrides: vec![position],
+                                ..Default::default()
+                            }
+                        }
+                        Token::Move => {
+                            let value = self.parse_integer()?;
+                            span.end = value.1.end;
+                            InstructionStatement {
+                                instruction: Instruction::SetConstant {
+                                    position: ValueAccess::Current,
+                                    value: 0,
+                                    tmp: None,
+                                },
+                                value_overrides: vec![Spanned((value.0, false), value.1)],
+                                value_access_overrides: vec![position],
+                                ..Default::default()
+                            }
+                        }
+                        _ => {
+                            return Err(Error::Unexpected(
+                                action.1,
+                                Some("'++', '--', or '='".to_string()),
+                            ))
+                        }
+                    }
+                }
             };
             self.expect_token(Token::Semicolon)?;
             Ok((Some(r), span))
@@ -988,14 +1196,7 @@ pub(crate) mod ast {
             let global =
                 |index: usize| self.lower_global_call_id(&instruction.block_overrides[index].0);
             let inline = |index: usize| -> Result<InlineCall> {
-                let a = &instruction.block_overrides[index];
-                let block = self.lower_block_id(&a.0)?;
-                let mut parameters = Vec::with_capacity(a.1.len());
-                for p in &a.1 {
-                    parameters.push(self.lower_value_access(p.clone())?);
-                }
-                todo!(); // Incomplete: handle inline calls(where the block isn't declared elsewhere)
-                Ok(InlineCall::Block { block, parameters })
+                self.lower_inline_call(&instruction.inline_overrides[index])
             };
             let temp = |index: usize| {
                 if instruction.value_access_overrides.len() > index {
@@ -1089,6 +1290,10 @@ pub(crate) mod ast {
                     tmp[0] = temp(1)?;
                     tmp[1] = temp(2)?;
                 }
+                Instruction::InlineWhileLoop { position, block } => {
+                    *position = value_access(0)?;
+                    *block = inline(0)?;
+                }
             }
             Ok(i)
         }
@@ -1112,6 +1317,42 @@ pub(crate) mod ast {
                 Ok(*i)
             } else {
                 Err(Spanned(format!("Invalid static: {}", id.0), id.1.clone()).into())
+            }
+        }
+        fn lower_inline_call(&self, call: &Spanned<RawInlineCall>) -> Result<InlineCall> {
+            match &call.0 {
+                RawInlineCall::Block { instructions } => {
+                    let mut new_instructions = Vec::with_capacity(instructions.len());
+                    for ins in instructions {
+                        new_instructions.push(self.lower_instruction(&ins)?);
+                    }
+                    Ok(InlineCall::Block {
+                        instructions: new_instructions,
+                    })
+                }
+                RawInlineCall::Inline { call, params } => {
+                    let block = self.lower_block_id(&call)?;
+                    if self.blocks[block as usize].num_params as usize != params.len() {
+                        return Err(Error::Other(Spanned(
+                            "".to_string(),
+                            // The span of the call and parameters
+                            call.1.start..if let Some(a) = params.last() {
+                                a.1.end
+                            } else {
+                                call.1.end
+                            },
+                        )));
+                    }
+                    let mut new_params = Vec::with_capacity(params.len());
+                    for param in params {
+                        new_params.push(self.lower_value_access(param.clone())?);
+                    }
+                    Ok(InlineCall::Inline {
+                        block,
+                        parameters: new_params,
+                    })
+                }
+                RawInlineCall::Empty => Ok(InlineCall::default()),
             }
         }
     }
