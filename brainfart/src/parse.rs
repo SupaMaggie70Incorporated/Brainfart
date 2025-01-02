@@ -79,6 +79,11 @@ enum Token {
         |lex| parse_string(lex.slice(), lex.span())
     )]
     String(String),
+    #[regex(
+        r#"'([^'\\]|\\['\\nrt0]|[a-fA-F0-9]{2})'"#,
+        |lex| parse_char(lex.slice(), lex.span())
+    )]
+    Char(char),
     #[token("{")]
     BraceOpen,
     #[token("}")]
@@ -258,6 +263,47 @@ fn parse_string(slice: &str, span: Span) -> Result<String> {
         }
     }
     Ok(out)
+}
+fn parse_char(slice: &str, span: Span) -> Result<char> {
+    if !slice.is_ascii() {
+        return Err(Spanned(
+            format!("String literals must contain only ascii characters!"),
+            span,
+        )
+        .into());
+    }
+    let slice = &slice[1..slice.len() - 1];
+    let mut chars = slice.chars();
+    let c = chars.next().unwrap();
+    Ok(if c == '\\' {
+        match chars.next() {
+            Some('n') => '\n',
+            Some('r') => '\r',
+            Some('t') => '\t',
+            Some('\\') => '\\',
+            Some('\'') => '\'',
+            Some('0') => '\0',
+            Some(c2) => {
+                if let Some(c3) = chars.next() {
+                    let a = String::from_utf8_lossy(&[c2 as u8, c3 as u8]).to_string();
+                    if let Ok(r) = u8::from_str_radix(&a, 16) {
+                        r as char
+                    } else {
+                        return Err(Spanned(
+                            format!("Unrecognized string escape sequence: \\{c2}{c3}"),
+                            span,
+                        )
+                        .into());
+                    }
+                } else {
+                    unreachable!()
+                }
+            }
+            None => unreachable!(),
+        }
+    } else {
+        c
+    })
 }
 fn parse_block_comment<'a>(lex: &mut Lexer<'a, Token>) -> logos::Skip {
     let mut remainder = lex.remainder();
@@ -567,6 +613,7 @@ pub(crate) mod ast {
             let t = self.next_token()?;
             match t.0 {
                 Token::Number(num) => Ok(Spanned(Integer::Literal(num), t.1)),
+                Token::Char(c) => Ok(Spanned(Integer::Literal(c as u32), t.1)),
                 Token::Length => {
                     let id = self.parse_ident()?;
                     Ok(Spanned(Integer::Length(id.0), t.1.start..id.1.end))

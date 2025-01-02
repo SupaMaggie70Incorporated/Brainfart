@@ -9,7 +9,7 @@ meta entry main;
 global block main() {
   push stack 3;
   goto stack[0];
-  current ++ 65;
+  current ++ 'A';
   bfraw ".[-]";
   goto counter[0];
   bfraw "[->[.>]";
@@ -17,7 +17,7 @@ global block main() {
   bfraw "<]";
   updateptr counter[0];
   goto stack[1];
-  ++ 65;
+  ++ 'B';
   bfraw ".[-]";
   pop stack 3;
   exit;
